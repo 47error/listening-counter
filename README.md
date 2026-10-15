@@ -149,3 +149,11 @@ git push origin main
 - 使用快照儲存，適合個人用量。大量歷史資料的效能尚未測量；未實作定時背景同步、多裝置同步或自動雲端備份。
 - 公開代理固定只能呼叫 `user.getrecenttracks`，有參數檢查、超時與 no-store；目前沒有持久化的站級限流器。公開後請留意 Netlify 免費額度與 Last.fm 使用規範。
 - 不提供會員、公開個人排行榜或資料分享。統計不等於 Spotify 官方有效串流。
+
+## 多平台 v2
+
+支援 Spotify、Melon、YouTube Music、其他自訂平台與 Last.fm／來源未確認；含平台統計、手動日期／批次、歌曲合併、自訂平台封存、Takeout JSON 本機預覽及逐筆確認匯入。
+
+[資料模型、遷移風險、Takeout 格式限制與 Android Chrome 驗收](docs/MULTI_PLATFORM.md) · [v2 實際驗證結果](docs/V2_VERIFICATION.md)
+
+新增測試：`npm run test:db`（資料庫與多平台）、`npx playwright install chromium` 後執行 `npm run test:e2e`（Chromium 手機模擬）。

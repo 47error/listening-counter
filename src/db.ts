@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
-import { emptyState, type State } from './domain';
+import { emptyState, migrateState, type State } from './domain';
 const database = () => openDB('listening-counter', 1, { upgrade(db) { db.createObjectStore('state'); } });
-export async function loadState(): Promise<State> { const db = await database(); try { return await db.get('state', 'main') || emptyState(); } finally { db.close(); } }
+export async function loadState(): Promise<State> { const db = await database(); try { const raw = await db.get('state', 'main'); return raw ? migrateState(raw) : emptyState(); } finally { db.close(); } }
 export async function saveState(state: State): Promise<void> { const db = await database(); try { const tx = db.transaction('state', 'readwrite'); await tx.store.put(state, 'main'); await tx.done; } finally { db.close(); } }
 // 僅允許一個頁籤寫入，避免第二個頁籤以舊快照覆蓋資料。
 export async function lockWriter(onLock: () => void): Promise<void> {

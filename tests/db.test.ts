@@ -9,7 +9,7 @@ describe('IndexedDB 本機資料層', () => {
   it('新資料庫回傳空白狀態', async () => { expect(await loadState()).toEqual(emptyState()); });
   it('歌曲與不同來源紀錄可完整儲存後讀回', async () => {
     const state = mergeTracks(emptyState(), [{ name: 'Dash', artist: { '#text': 'PLAVE' }, date: { uts: '1700000000' } }], 'listener');
-    state.plays.push({ id: 'manual-test', songId: state.songs[0].id, at: 1700000100000, source: 'manual' });
+    state.plays.push({ id: 'manual-test', songId: state.songs[0].id, at: 1700000100000, createdAt: 1700000100000, platformId: 'unknown', source: 'manual' });
     await saveState(state); expect(await loadState()).toEqual(state);
   });
   it('讀出的快照不會直接修改已儲存資料', async () => {

@@ -20,3 +20,5 @@ jobs:
       - run: timeout 30s npm test
       - run: timeout 60s npm run test:db
       - run: timeout 60s npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
