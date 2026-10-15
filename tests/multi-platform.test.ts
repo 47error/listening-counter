@@ -252,3 +252,125 @@ it("疑似重複僅提示，不自動判斷跨來源是否同一次", () => {
   expect(suspectedDuplicates(next)).toHaveLength(1);
   expect(next).toEqual(before);
 });
+
+import { v1Fixture } from "./fixtures/v1";
+import { loadStateWithInfo } from "../src/db";
+import { planRecovery } from "../src/recovery";
+it("21 首／54 筆 v1 實際讀取遷移：53 Last.fm＋1 手動，且不寫入原快照", async () => {
+  const raw = v1Fixture();
+  const before = structuredClone(raw);
+  const db = await openDB("listening-counter", 1, {
+    upgrade(db) {
+      db.createObjectStore("state");
+    },
+  });
+  await db.put("state", raw, "main");
+  const { state, info } = await loadStateWithInfo();
+  expect(info).toEqual({
+    snapshotPresent: true,
+    storedSchemaVersion: 1,
+    databaseVersion: 1,
+  });
+  expect(state.songs).toEqual(raw.songs);
+  expect(state.plays).toHaveLength(54);
+  expect(state.plays.filter((p) => p.source === "lastfm")).toHaveLength(53);
+  expect(state.plays.filter((p) => p.source === "manual")).toHaveLength(1);
+  expect(filterPlays(state, "unknown")).toHaveLength(54);
+  expect(state.cursor).toEqual(raw.cursor);
+  expect(state.watermarks).toEqual(raw.watermarks);
+  expect(await db.get("state", "main")).toEqual(before);
+  expect(migrateState(state)).toEqual(state);
+  db.close();
+});
+it("v1 JSON 安全補入空帳本後可重複還原，不丟來源及次數", async () => {
+  const raw = v1Fixture(),
+    before = structuredClone(raw);
+  const plan = planRecovery(emptyState(), JSON.parse(JSON.stringify(raw)));
+  expect(plan.addedSongs).toBe(21);
+  expect(plan.addedPlays).toBe(54);
+  expect(plan.state.plays.filter((p) => p.source === "manual")).toHaveLength(1);
+  expect(plan.state.plays.every((p) => p.platformId === "unknown")).toBe(true);
+  await saveState(plan.state, emptyState());
+  const repeat = planRecovery(await loadState(), raw);
+  expect(repeat.addedSongs).toBe(0);
+  expect(repeat.addedPlays).toBe(0);
+  expect(repeat.duplicate).toBe(54);
+  expect(raw).toEqual(before);
+});
+it("補入保留已有歌曲、手動紀錄及目標；ID 衝突整批拒絕", async () => {
+  const initial = seed(),
+    current = manualPlays(
+      initial,
+      initial.songs[0].id,
+      "spotify",
+      1700000000000,
+      1,
+    );
+  const plan = planRecovery(current, v1Fixture());
+  expect(plan.state.songs).toHaveLength(22);
+  expect(plan.state.plays).toHaveLength(56);
+  expect(plan.state.songs[0]).toEqual(current.songs[0]);
+  expect(plan.state.plays.slice(0, 2)).toEqual(current.plays);
+  await saveState(current);
+  const raw = v1Fixture();
+  const oldId = raw.songs[0].id;
+  raw.songs[0].id = current.songs[0].id;
+  raw.plays.forEach((p) => {
+    if (p.songId === oldId) p.songId = current.songs[0].id;
+  });
+  expect(() => planRecovery(current, raw)).toThrow();
+  expect(await loadState()).toEqual(current);
+});
+
+it("不存在與毀損快照分開處理，拒絕將 null 當成空帳本", async () => {
+  expect((await loadStateWithInfo()).info.snapshotPresent).toBe(false);
+  const db = await openDB("listening-counter", 1);
+  expect(await db.getKey("state", "main")).toBeUndefined();
+  for (const raw of [null, false, 0, {}, { schemaVersion: 99 }]) {
+    await db.put("state", raw, "main");
+    await expect(loadState()).rejects.toThrow();
+    expect(await db.get("state", "main")).toEqual(raw);
+  }
+  db.close();
+});
+it("寫入前比對最新快照，過期空狀態不得蓋掉已有的 21 首／54 筆", async () => {
+  const expected = await loadState(),
+    current = migrateState(v1Fixture());
+  await saveState(current);
+  await expect(saveState(emptyState(), expected)).rejects.toThrow("避免覆蓋");
+  expect(await loadState()).toEqual(current);
+});
+it("多次分頁同步使用最新已提交快照仍可繼續", async () => {
+  let persisted = emptyState();
+  await saveState(persisted);
+  const result = await syncBatch(
+    persisted,
+    "synthetic",
+    true,
+    async (s) => {
+      await saveState(s, persisted);
+      persisted = s;
+    },
+    () => {},
+    async (url) => {
+      const page = Number(
+        new URL(
+          url instanceof Request ? url.url : url,
+          "https://example.test",
+        ).searchParams.get("page"),
+      );
+      return Response.json({
+        tracks: [
+          {
+            name: "測試",
+            artist: { "#text": "PLAVE" },
+            date: { uts: String(1700000000 + page) },
+          },
+        ],
+        totalPages: 2,
+      });
+    },
+  );
+  expect(result.plays).toHaveLength(2);
+  expect(await loadState()).toEqual(result);
+});

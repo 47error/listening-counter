@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Headphones, LayoutDashboard, Disc3, History, Settings, Plus, ArrowUpRight, ShieldCheck, RefreshCw, Search, X, Download, Upload, Pencil, Trash2, Music2, ChevronRight, Check, ExternalLink, Heart, Menu } from 'lucide-react';
-import { emptyState, isPlaveArtist, normalize, periodStart, safeCover, validateBackup, watermarkFor, type Song, type State, type Period } from './domain';
-import { loadState, lockWriter, saveState } from './db';
+import { emptyState, isPlaveArtist, normalize, periodStart, safeCover, watermarkFor, type Song, type State, type Period } from './domain';
+import { loadStateWithInfo, lockWriter, saveState, type StorageInfo } from './db';
 import { syncBatch } from './sync';
 import { filterPlays, manualPlays, platformName, removePlay } from './domain';
 import { PlatformManager, TakeoutImporter, DuplicateReview } from './PlatformTools';
+import { planRecovery } from './recovery';
 import './styles.css';
 const tabs = [{ id: 'home', label: '聆聽總覽', icon: LayoutDashboard }, { id: 'songs', label: '我的歌曲', icon: Disc3 }, { id: 'history', label: '聆聽紀錄', icon: History }, { id: 'import', label: 'YouTube Music 匯入', icon: Upload }, { id: 'settings', label: '連接與備份', icon: Settings }];
 const periods: { id: Period; label: string }[] = [{ id: 'day', label: '今日' }, { id: 'week', label: '本週' }, { id: 'month', label: '本月' }, { id: 'all', label: '累積' }];
@@ -20,12 +21,14 @@ function App() {
   const [state, setState] = useState<State>(emptyState), [ready, setReady] = useState(false), [fatal, setFatal] = useState('');
   const [tab, setTab] = useState('home'), [period, setPeriod] = useState<Period>('all'), [onlyPlave, setOnlyPlave] = useState(true), [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState(false), [user, setUser] = useState('');
-  const [edit, setEdit] = useState<Song | null>(null), [restore, setRestore] = useState<State | null>(null), [menu, setMenu] = useState(false), [historyLimit, setHistoryLimit] = useState(50);
+  const [edit, setEdit] = useState<Song | null>(null), [restore, setRestore] = useState<ReturnType<typeof planRecovery> | null>(null), [menu, setMenu] = useState(false), [historyLimit, setHistoryLimit] = useState(50);
   const [platform, setPlatformFilter] = useState('all'), [manualPlatform, setManualPlatform] = useState('unknown'), [batchSong, setBatchSong] = useState<Song | null>(null);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const persistedState = useRef<State>(emptyState());
   const busyRef = useRef(false), upload = useRef<HTMLInputElement>(null);
-  useEffect(() => { void lockWriter(() => { void loadState().then(s => { setState(s); setUser(s.username); setReady(true); }).catch(e => setFatal(`無法載入本機資料，原始資料未變更。${e instanceof Error ? e.message : '請確認瀏覽器允許網站儲存資料。'}`)); }).catch(e => setFatal(e.message)); }, []);
+  useEffect(() => { void lockWriter(() => { void loadStateWithInfo().then(({state: s, info}) => { setStorageInfo(info); persistedState.current = s; setState(s); setUser(s.username); setReady(true); }).catch(e => setFatal(`無法載入本機資料，原始資料未變更。${e instanceof Error ? e.message : '請確認瀏覽器允許網站儲存資料。'}`)); }).catch(e => setFatal(e.message)); }, []);
   const notify = (m: string, bad = false) => { setMessage(m); setError(bad); };
-  async function commit(s: State) { await saveState(s); setState(s); }
+  async function commit(s: State) { await saveState(s, persistedState.current); persistedState.current = s; setState(s); setStorageInfo({ snapshotPresent: true, storedSchemaVersion: 2, databaseVersion: 1 }); }
   async function act(fn: () => Promise<void>) {
     if (busyRef.current || !ready) return;
     busyRef.current = true; setBusy(true);
@@ -54,7 +57,7 @@ function App() {
   const blankSong = (): Song => ({ id: crypto.randomUUID(), title: '', artist: 'PLAVE', album: '', version: '原版', cover: '', goal: 100, isPlave: true });
   function navigate(id: string) { setTab(id); setMenu(false); setSearch(''); }
   function backup() { const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `listening-counter-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); notify('已開始下載備份，請確認檔案已儲存。'); }
-  async function readBackup(file?: File) { if (!file) return; try { if (file.size > 50 * 1024 * 1024) throw new Error('請選擇小於 50 MB 的 JSON 備份。'); setRestore(validateBackup(JSON.parse(await file.text()))); } catch (e) { notify(e instanceof Error ? e.message : '無法讀取備份。', true); } }
+  async function readBackup(file?: File) { if (!file) return; setRestore(null); try { if (file.size > 50 * 1024 * 1024) throw new Error('請選擇小於 50 MB 的 JSON 備份。'); setRestore(planRecovery(state, JSON.parse(await file.text()))); } catch (e) { notify(e instanceof Error ? e.message : '無法讀取備份。', true); } }
   if (fatal) return <main className="fatal"><ShieldCheck size={36}/><h1>資料暫時無法開啟</h1><p role="alert">{fatal}</p><button onClick={() => location.reload()}>重新整理</button></main>;
   if (!ready) return <main className="fatal" aria-live="polite"><Headphones size={36}/><p>正在開啟你的聆聽手帳…</p></main>;
   return <div className="app-shell">
@@ -62,6 +65,7 @@ function App() {
     {menu && <button className="menu-shade" aria-label="關閉選單" onClick={() => setMenu(false)}/>}
     <div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="開啟選單" onClick={() => setMenu(!menu)}><Menu size={22}/></button><span>我的聆聽空間</span><ChevronRight size={14}/><strong>{tabs.find(t => t.id === tab)?.label}</strong></div><div className="topbar-right"><span className="local-badge"><span className="green-dot"/>本機私密儲存</span><span className="avatar">P</span></div></header>
     <main><div className="page-heading"><div><div className="eyebrow">LISTEN. RECORD. REPEAT.</div><h1>{tab === 'home' ? '每一次喜歡，都算數。' : tabs.find(t => t.id === tab)?.label}</h1><p>{tab === 'home' ? '留住與 PLAVE 相伴的每一刻，慢慢累積你的聆聽日常。' : tab === 'songs' ? '收藏喜歡的旋律，為每首歌留下自己的目標。' : tab === 'history' ? '每一次聆聽，都有跡可循。' : '連接公開紀錄，也好好保護你的個人收藏。'}</p></div><button className="primary" disabled={busy} onClick={() => setEdit(blankSong())}><Plus size={17}/>新增歌曲</button></div>
+    <section className="panel storage-diagnostics" aria-label="本機資料診斷"><h2>本機資料診斷</h2><p className="hint">目前網址：<span>{location.origin}</span> · 資料庫 listening-counter／state／main · IndexedDB 版本 {storageInfo?.databaseVersion} · 載入快照 {storageInfo?.storedSchemaVersion ?? '不存在'} → 程式格式 2</p><p>未篩選總數：{state.songs.length} 首歌曲、{state.plays.length} 筆紀錄</p>{state.songs.length === 0 && state.plays.length === 0 && <p role="status" className="hint">{storageInfo?.snapshotPresent ? '目前網址儲存的是空快照。' : '目前網址找不到既有快照，尚未自動寫入空資料。'}不同網域、預覽網址、瀏覽器或 Chrome 使用者設定檔不共用資料。若升級前有資料，請先回原網址下載備份；可到「連接與備份」預覽安全補入，請勿清除網站資料。</p>}</section>
     {message && <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}><span>{error ? '⚠ ' : '✓ '}{message}</span><button className="icon-button" aria-label="關閉通知" onClick={() => setMessage('')}><X size={16}/></button></div>}
     {(tab === 'home' || tab === 'songs' || tab === 'history') && <div className="filterbar"><div className="segments" aria-label="統計期間">{periods.map(p => <button key={p.id} className={period === p.id ? 'selected' : ''} onClick={() => setPeriod(p.id)}>{p.label}</button>)}</div><label className="check-filter"><input type="checkbox" checked={onlyPlave} onChange={e => setOnlyPlave(e.target.checked)}/>只看 PLAVE<span className="filter-help">可在編輯歌曲時修正</span></label></div>}
     {(tab === 'home' || tab === 'songs' || tab === 'history') && <section className="panel platform-controls"><label className="field">平台篩選<select aria-label="平台篩選" value={platform} onChange={e => setPlatformFilter(e.target.value)}><option value="all">全部</option>{state.platforms.map(p => <option key={p.id} value={p.id}>{p.name}{p.id === 'other' ? '（含自訂）' : ''}</option>)}</select></label><label className="field">手動計數平台<select aria-label="手動計數平台" value={manualPlatform} onChange={e => setManualPlatform(e.target.value)}>{state.platforms.filter(p => !p.archived).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><p className="hint">篩選只改變顯示。+1 使用手動計數平台；舊紀錄保留來源未確認。</p></section>}
@@ -76,7 +80,8 @@ function App() {
     </main></div>
     {batchSong && <Modal title={`新增聆聽：${batchSong.title}`} close={() => !busy && setBatchSong(null)}><ManualForm state={state} platform={manualPlatform} busy={busy} save={(p,at,count) => { if (confirm(`確認新增 ${count} 次 ${platformName(state,p)} 聆聽？時間：${date(at)}`)) void act(async () => { await commit(manualPlays(state,batchSong.id,p,at,count)); setBatchSong(null); notify(`已新增 ${count} 筆手動紀錄。`); }); }}/></Modal>}
     {edit && <SongEditor song={edit} busy={busy} close={() => setEdit(null)} save={song => void act(async () => { const exists = state.songs.some(s => s.id === song.id); await commit({ ...state, songs: exists ? state.songs.map(s => s.id === song.id ? song : s) : [...state.songs, song] }); setEdit(null); notify('歌曲已儲存。'); })} remove={state.songs.some(s => s.id === edit.id) ? () => { if (confirm('確定刪除此歌曲及其所有聆聽紀錄？建議先下載備份。已匯入事件會保留去重鍵，以防重掃再次匯入。')) void act(async () => { await commit({ ...state, songs: state.songs.filter(s => s.id !== edit.id), plays: state.plays.filter(p => p.songId !== edit.id), ignoredKeys: [...new Set([...state.ignoredKeys, ...state.plays.filter(p => p.songId === edit.id && p.externalKey).map(p => p.externalKey!)])] }); setEdit(null); notify('已刪除歌曲與相關紀錄。'); }); } : undefined}/>}
-    {restore && <Modal title="確認還原備份" close={() => !busy && setRestore(null)}><p className="restore-copy">此備份包含 {restore.songs.length} 首歌曲、{restore.plays.length} 筆聆聽紀錄。還原會取代此瀏覽器的全部現有資料。建議先下載目前的備份。</p><div className="settings-actions"><button className="secondary" onClick={backup}>先備份現有資料</button><button className="primary" disabled={busy} onClick={() => void act(async () => { await commit(restore); setUser(restore.username); setRestore(null); notify('備份已完整還原。'); })}>確認取代並還原</button></div></Modal>}
+    {restore && <Modal title="安全補入備份預覽" close={() => !busy && setRestore(null)}><p className="restore-copy">備份包含 {restore.backupSongs} 首歌曲、{restore.backupPlays} 筆紀錄。將補入 {restore.addedSongs} 首歌曲、{restore.addedPlays} 筆紀錄；重複 {restore.duplicate} 筆、曾刪除略過 {restore.ignored} 筆。保留現有歌曲、紀錄與目標，遇到衝突會停止，不會取代整份資料。</p><div className="settings-actions"><button className="secondary" onClick={backup}>先備份現有資料</button><button className="primary" disabled={busy} onClick={() => void act(async () => { const recovered = planRecovery(persistedState.current, restore.state).state; await commit(recovered); setUser(recovered.username); setRestore(null); notify('備份已安全補入，現有資料保留。'); })}>確認補入缺少資料</button></div></Modal>}
+
   </div>;
 }
 function ManualForm({ state, platform, busy, save }: { state: State; platform: string; busy: boolean; save: (p: string, at: number, count: number) => void }) {

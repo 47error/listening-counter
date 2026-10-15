@@ -157,3 +157,5 @@ git push origin main
 [資料模型、遷移風險、Takeout 格式限制與 Android Chrome 驗收](docs/MULTI_PLATFORM.md) · [v2 實際驗證結果](docs/V2_VERIFICATION.md)
 
 新增測試：`npm run test:db`（資料庫與多平台）、`npx playwright install chromium` 後執行 `npm run test:e2e`（Chromium 手機模擬）。
+
+[升級後顯示 0：非破壞性診斷與安全補入](docs/ZERO_DATA_DIAGNOSIS.md)

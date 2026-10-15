@@ -99,13 +99,11 @@ test("手機：Takeout 必須逐筆確認、重複匯入與錯誤檔案不寫入
     },
   ]);
   const upload = async (content: string) =>
-    page
-      .getByLabel("選擇 JSON 紀錄")
-      .setInputFiles({
-        name: "watch-history.json",
-        mimeType: "application/json",
-        buffer: Buffer.from(content),
-      });
+    page.getByLabel("選擇 JSON 紀錄").setInputFiles({
+      name: "watch-history.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(content),
+    });
   await upload(text);
   await expect(page.getByRole("heading", { name: "匯入預覽" })).toBeVisible();
   const button = page.getByRole("button", { name: "確認匯入", exact: true });
@@ -126,10 +124,134 @@ test("手機：Takeout 必須逐筆確認、重複匯入與錯誤檔案不寫入
   ).toBeVisible();
   const before = await snapshot(page);
   await upload(text);
-  await expect(page.locator("section.panel")).toContainText("重複 1");
+  await expect(
+    page.locator("section.panel").filter({ hasText: "YouTube Music 本機匯入" }),
+  ).toContainText("重複 1");
   expect(await snapshot(page)).toEqual(before);
   await upload("{bad");
   await expect(page.getByRole("alert")).toContainText("無法解析");
   expect(await snapshot(page)).toEqual(before);
   await noOverflow(page);
+});
+
+import { v1Fixture } from "../fixtures/v1";
+test("手機：既有 v1 21 首／54 筆直接載入，取消分類後不會變 0 且未寫回原資料", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  const legacy = v1Fixture();
+  await page.evaluate(async (raw) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("listening-counter", 1);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("state", "readwrite");
+      tx.objectStore("state").put(raw, "main");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, legacy);
+  await page.reload();
+  await expect(page.getByLabel("本機資料診斷")).toContainText(
+    "未篩選總數：21 首歌曲、54 筆紀錄",
+  );
+  await expect(page.locator(".song-card")).toHaveCount(21);
+  await page.getByRole("checkbox", { name: "只看 PLAVE" }).uncheck();
+  await page.getByLabel("平台篩選", { exact: true }).selectOption("unknown");
+  await expect(page.locator(".stat-number").first()).toHaveText("54");
+  await expect(page.locator(".song-card")).toHaveCount(21);
+  expect(await snapshot(page)).toEqual(legacy);
+  await noOverflow(page);
+  await page.goto("http://localhost:4173/");
+  await expect(page.getByLabel("本機資料診斷")).toContainText(
+    "目前網址找不到既有快照",
+  );
+  await expect(page.getByLabel("本機資料診斷")).toContainText(
+    "0 首歌曲、0 筆紀錄",
+  );
+  await page.goto("http://127.0.0.1:4173/");
+  await expect(page.getByLabel("本機資料診斷")).toContainText(
+    "21 首歌曲、54 筆紀錄",
+  );
+  expect(await snapshot(page)).toEqual(legacy);
+});
+test("手機：不同 origin 空資料提示與 v1 備份安全補入預覽，不取代現有歌曲", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByLabel("本機資料診斷")).toContainText(
+    "目前網址找不到既有快照",
+  );
+  expect(await snapshot(page)).toBeUndefined();
+  await page.getByRole("button", { name: "新增歌曲", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("歌曲名稱").fill("本機新歌");
+  await page.getByRole("button", { name: "儲存歌曲" }).click();
+  const original = await snapshot(page);
+  await navigate(page, "連接與備份");
+  const upload = () =>
+    page
+      .getByLabel("選擇 JSON 備份")
+      .setInputFiles({
+        name: "synthetic-v1.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(v1Fixture())),
+      });
+  await upload();
+  await expect(page.getByRole("dialog")).toContainText(
+    "將補入 21 首歌曲、54 筆紀錄",
+  );
+  expect(await snapshot(page)).toEqual(original);
+  await page.getByRole("button", { name: "確認補入缺少資料" }).click();
+  await expect(page.getByLabel("本機資料診斷")).toContainText(
+    "22 首歌曲、54 筆紀錄",
+  );
+  const restored = await snapshot(page);
+  expect(restored.songs).toContainEqual(original.songs[0]);
+  expect(restored.plays.filter((p: any) => p.source === "lastfm")).toHaveLength(
+    53,
+  );
+  expect(restored.plays.filter((p: any) => p.source === "manual")).toHaveLength(
+    1,
+  );
+  await upload();
+  await expect(page.getByRole("dialog")).toContainText(
+    "將補入 0 首歌曲、0 筆紀錄",
+  );
+  await page.getByRole("button", { name: "確認補入缺少資料" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await snapshot(page)).toEqual(restored);
+  await noOverflow(page);
+});
+
+test("手機：損壞快照顯示錯誤並停止，不能當作空帳本寫入", async ({ page }) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("listening-counter", 1);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("state", "readwrite");
+      tx.objectStore("state").put(null, "main");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText("原始資料未變更");
+  await expect(
+    page.getByRole("button", { name: "新增歌曲", exact: true }),
+  ).toHaveCount(0);
+  expect(await snapshot(page)).toBeNull();
 });
