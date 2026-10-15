@@ -192,6 +192,8 @@ test("手機：不同 origin 空資料提示與 v1 備份安全補入預覽，�
   await page.getByRole("button", { name: "新增歌曲", exact: true }).click();
   await page.getByRole("dialog").getByLabel("歌曲名稱").fill("本機新歌");
   await page.getByRole("button", { name: "儲存歌曲" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByLabel("本機資料診斷")).toContainText("1 首歌曲、0 筆紀錄");
   const original = await snapshot(page);
   await navigate(page, "連接與備份");
   const upload = () =>

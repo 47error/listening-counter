@@ -24,3 +24,5 @@
 Android Chrome 啟動鎖修復驗證：長期持鎖不再阻擋讀取、鎖占用與資料庫錯誤分開分類、寫入成功／失敗均釋鎖、多分頁過期快照保護、無 Web Locks 可讀不可寫、較高資料庫版本不降版、versionchange 自動關連線、blocked／開啟逾時晚到連線關閉、容量錯誤不改資料與安全診斷欄位。blocked／逾時使用受控 openDB 回呼，其他資料庫案例使用 fake-indexeddb；瀏覽器使用真實 Web Locks 與 IndexedDB，手機為視窗模擬。詳見 [STORAGE_LOCK_DIAGNOSIS.md](STORAGE_LOCK_DIAGNOSIS.md)。
 
 單筆管理：合成 21 首／58 筆逐筆刪除指定四個 ID，原始 54 筆逐欄內容、歌曲目標、同步游標不變。取消不寫入、同時間手動事件獨立、持久恢復、Last.fm 同步不補回及恢復後不重複、v1／v2 備份相容與副本／忽略鍵往返、衝突拒絕、首頁平台統計更新皆通過。未操作正式網站或私人備份。詳見 [SINGLE_PLAY_MANAGEMENT.md](SINGLE_PLAY_MANAGEMENT.md)。
+
+PR #3 遠端曾發現既有安全補入測試在新增歌曲尚未提交前讀取基準快照，取得 undefined。已等待儲存視窗關閉及 1 首／0 筆診斷後再讀取，修正測試時序；沒有用重試或取消並行來掩蓋失敗。
