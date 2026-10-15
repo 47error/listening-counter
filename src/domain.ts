@@ -22,6 +22,11 @@ export interface Play {
   externalKey?: string;
   account?: string;
 }
+export interface DeletedPlay {
+  play: Play;
+  song: Song;
+  deletedAt: number;
+}
 export interface Cursor {
   user: string;
   from: number;
@@ -32,6 +37,7 @@ export interface State {
   schemaVersion: 2;
   platforms: Platform[];
   ignoredKeys: string[];
+  deletedPlays?: DeletedPlay[];
   songs: Song[];
   plays: Play[];
   username: string;
@@ -315,11 +321,49 @@ export function validateBackup(input: unknown): State {
     Object.values(s.watermarks).some((v) => !Number.isSafeInteger(v) || v < 0)
   )
     return fail();
+  if (s.deletedPlays !== undefined) {
+    if (!Array.isArray(s.deletedPlays)) return fail();
+    const deletedIds = new Set<string>(),
+      deletedKeys = new Set<string>();
+    for (const entry of s.deletedPlays) {
+      if (
+        !entry ||
+        !entry.play ||
+        !entry.song ||
+        !Number.isSafeInteger(entry.deletedAt) ||
+        entry.deletedAt <= 0 ||
+        entry.deletedAt > 8640000000000000 ||
+        plays.has(entry.play.id) ||
+        deletedIds.has(entry.play.id)
+      )
+        return fail();
+      // Validate archived snapshots independently: the song may later be explicitly removed.
+      validateBackup({
+        schemaVersion: 2,
+        platforms: s.platforms,
+        ignoredKeys: [],
+        songs: [entry.song],
+        plays: [entry.play],
+        username: "",
+        watermarks: {},
+      });
+      if (
+        entry.play.externalKey &&
+        (keys.has(entry.play.externalKey) ||
+          deletedKeys.has(entry.play.externalKey) ||
+          !s.ignoredKeys.includes(entry.play.externalKey))
+      )
+        return fail();
+      deletedIds.add(entry.play.id);
+      if (entry.play.externalKey) deletedKeys.add(entry.play.externalKey);
+    }
+  }
   // 分頁游標不從備份還原，重新掃描並透過事件鍵去重。
   return {
     schemaVersion: 2,
     platforms: s.platforms,
     ignoredKeys: [...new Set(s.ignoredKeys)],
+    ...(s.deletedPlays !== undefined ? { deletedPlays: s.deletedPlays } : {}),
     songs: s.songs,
     plays: s.plays,
     username: s.username,
@@ -413,18 +457,71 @@ export function setPlatform(state: State, name: string, id?: string): State {
       : [...state.platforms, { id: crypto.randomUUID(), name, custom: true }],
   };
 }
-export function removePlay(state: State, id: string): State {
-  const p = state.plays.find((p) => p.id === id);
+export function removePlay(
+  state: State,
+  id: string,
+  deletedAt = Date.now(),
+): State {
+  const play = state.plays.find((p) => p.id === id);
+  const song = play && state.songs.find((s) => s.id === play.songId);
+  if (!play || !song) throw new Error("此筆紀錄已不存在，未刪除其他資料。");
+  if (
+    !Number.isSafeInteger(deletedAt) ||
+    deletedAt <= 0 ||
+    deletedAt > 8640000000000000
+  )
+    throw new Error("刪除時間無效，資料未變更。");
   return {
     ...state,
     plays: state.plays.filter((p) => p.id !== id),
+    deletedPlays: [
+      ...(state.deletedPlays || []),
+      { play: structuredClone(play), song: structuredClone(song), deletedAt },
+    ],
     ignoredKeys: [
       ...new Set([
         ...state.ignoredKeys,
-        ...(p?.externalKey ? [p.externalKey] : []),
+        ...(play.externalKey ? [play.externalKey] : []),
       ]),
     ],
   };
+}
+export function restorePlay(state: State, id: string): State {
+  const entry = state.deletedPlays?.find((e) => e.play.id === id);
+  if (!entry) throw new Error("找不到可恢復的紀錄，原有資料未變更。");
+  if (!state.songs.some((s) => s.id === entry.play.songId))
+    throw new Error(
+      "原歌曲已被刪除或合併，請保留備份並先核對歌曲歸屬；不會自動建立或猜測歌曲。",
+    );
+  if (
+    state.plays.some(
+      (p) =>
+        p.id === id ||
+        (!!entry.play.externalKey && p.externalKey === entry.play.externalKey),
+    )
+  )
+    throw new Error("紀錄已存在或外部識別資訊衝突，未重複恢復。");
+  return {
+    ...state,
+    plays: [...state.plays, structuredClone(entry.play)],
+    deletedPlays: state.deletedPlays!.filter((e) => e.play.id !== id),
+    ignoredKeys: entry.play.externalKey
+      ? state.ignoredKeys.filter((k) => k !== entry.play.externalKey)
+      : [...state.ignoredKeys],
+  };
+}
+export const playSourceLabel = (source: Play["source"]) =>
+  source === "manual"
+    ? "手動紀錄（manual）"
+    : source === "lastfm"
+      ? "Last.fm 同步（lastfm）"
+      : "檔案匯入（import）";
+export function playConfirmation(
+  state: State,
+  play: Play,
+  song = state.songs.find((s) => s.id === play.songId),
+) {
+  return `歌曲：${song?.title || "未知歌曲"}／${song?.artist || ""}／${song?.version || ""}\n平台：${platformName(state, play.platformId)}\n聆聽時間：${new Date(play.at).toLocaleString("zh-TW", { hour12: false })}（裝置當地時間）\n來源：${playSourceLabel(play.source)}\n紀錄 ID：${play.id}`;
 }
 export function mergeSongs(state: State, from: string, to: string): State {
   const a = state.songs.find((s) => s.id === from),

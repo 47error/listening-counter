@@ -3,6 +3,7 @@ import {
   mergeSongs,
   platformName,
   removePlay,
+  playConfirmation,
   setPlatform,
   suspectedDuplicates,
   type State,
@@ -172,7 +173,7 @@ export function DuplicateReview({ state, busy, run, commit }: Props) {
                 onClick={() => {
                   if (
                     confirm(
-                      "確認這是重複紀錄並刪除？外部識別鍵會保留以防再次匯入。",
+                      `確認只刪除此筆？\n${playConfirmation(state, p)}\n將移至已刪除紀錄，可自行恢復；不刪除歌曲或其他紀錄。`,
                     )
                   )
                     void run(async () => commit(removePlay(state, p.id)));

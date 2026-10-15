@@ -161,3 +161,7 @@ git push origin main
 [升級後顯示 0：非破壞性診斷與安全補入](docs/ZERO_DATA_DIAGNOSIS.md)
 
 [Android Chrome 啟動鎖定與安全錯誤診斷](docs/STORAGE_LOCK_DIAGNOSIS.md)
+
+## 單筆聆聽紀錄管理
+
+歌曲卡片可查看全部逐筆紀錄，核對 ID 後確認刪除；已刪除副本可持久恢復，外部去重鍵防止同步自動補回。[使用步驟、資料格式與風險](docs/SINGLE_PLAY_MANAGEMENT.md)。
