@@ -1,3 +1,5 @@
+> 多平台 v2 的最新驗證請參閱 [V2_VERIFICATION.md](docs/V2_VERIFICATION.md)。下方保留原 MVP 驗證紀錄。
+
 # 檢查報告
 
 本次保留 `/workspace/listening-counter` 既有專案，沒有重新建立專案、刪除功能或重新安裝套件。

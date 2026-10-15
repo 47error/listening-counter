@@ -44,7 +44,7 @@ test('手動修正歌手分類與版本，後續同步保留', () => {
   assert.equal(next.songs.length, 1); assert.equal(next.songs[0].isPlave, false); assert.equal(next.songs[0].version, '自訂版本');
 });
 test('手動與 Last.fm 事件保留不同來源', () => {
-  const s = populated(); s.plays.push({ id: 'manual-1', songId: s.songs[0].id, at: s.plays[0].at, source: 'manual' });
+  const s = populated(); s.plays.push({ id: 'manual-1', songId: s.songs[0].id, at: s.plays[0].at, source: 'manual', platformId: 'unknown', createdAt: s.plays[0].at });
   const next = mergeTracks(s, [track()], 'listener');
   assert.deepEqual(next.plays.map(p => p.source).sort(), ['lastfm', 'manual']);
 });
@@ -61,7 +61,7 @@ test('有效備份可往返還原，丟棄分頁游標', () => {
   assert.deepEqual(parsed.plays, s.plays); assert.equal(parsed.cursor, undefined);
 });
 test('錯誤版本、重複歌曲、孤立事件、負數目標與錯誤來源拒絕還原', () => {
-  const mutations = [s => s.schemaVersion = 2, s => s.songs.push(s.songs[0]), s => s.plays[0].songId = 'missing', s => s.songs[0].goal = -1, s => s.plays[0].source = 'spotify', s => s.watermarks.u = 'invalid', s => s.plays[0].at = 8640000000000001];
+  const mutations = [s => s.schemaVersion = 99, s => s.songs.push(s.songs[0]), s => s.plays[0].songId = 'missing', s => s.songs[0].goal = -1, s => s.plays[0].source = 'spotify', s => s.watermarks.u = 'invalid', s => s.plays[0].at = 8640000000000001];
   for (const mutate of mutations) { const s = populated(); mutate(s); assert.throws(() => validateBackup(s)); }
 });
 test('備份重複事件與重複外部鍵拒絕還原', () => {
