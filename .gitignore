@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.netlify/
+.env
+.env.*
+!.env.example
+*.zip
+
+# 本機憑證、私鑰與個人備份（API 金鑰仍不得寫進任何原始碼）
+.secrets/
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+backups/
+listening-counter-????-??-??.json
+*.log
+*.bundle
