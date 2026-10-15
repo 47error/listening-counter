@@ -1,0 +1,22 @@
+name: Check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies (bounded)
+        timeout-minutes: 3
+        run: |
+          if [ -f package-lock.json ]; then
+            timeout 120s npm ci --fetch-retries=1 --fetch-timeout=15000 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --no-audit --no-fund
+          else
+            timeout 120s npm install --fetch-retries=1 --fetch-timeout=15000 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --no-audit --no-fund
+          fi
+      - run: timeout 30s npm test
+      - run: timeout 60s npm run test:db
+      - run: timeout 60s npm run build
