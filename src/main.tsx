@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Headphones, LayoutDashboard, Disc3, History, Settings, Plus, ArrowUpRight, ShieldCheck, RefreshCw, Search, X, Download, Upload, Pencil, Trash2, Music2, ChevronRight, Check, ExternalLink, Heart, Menu } from 'lucide-react';
 import { emptyState, isPlaveArtist, normalize, periodStart, safeCover, watermarkFor, type Song, type State, type Period } from './domain';
-import { loadStateWithInfo, lockWriter, saveState, type StorageInfo } from './db';
+import { loadStateWithInfo, saveState, type StorageInfo } from './db';
 import { syncBatch } from './sync';
 import { filterPlays, manualPlays, platformName, removePlay } from './domain';
 import { PlatformManager, TakeoutImporter, DuplicateReview } from './PlatformTools';
 import { planRecovery } from './recovery';
+import { StorageFailure, storageFailure } from './storage-errors';
+import { StorageDiagnostics } from './StorageDiagnostics';
 import './styles.css';
 const tabs = [{ id: 'home', label: '聆聽總覽', icon: LayoutDashboard }, { id: 'songs', label: '我的歌曲', icon: Disc3 }, { id: 'history', label: '聆聽紀錄', icon: History }, { id: 'import', label: 'YouTube Music 匯入', icon: Upload }, { id: 'settings', label: '連接與備份', icon: Settings }];
 const periods: { id: Period; label: string }[] = [{ id: 'day', label: '今日' }, { id: 'week', label: '本週' }, { id: 'month', label: '本月' }, { id: 'all', label: '累積' }];
@@ -18,7 +20,7 @@ function Cover({ song, small = false }: { song: Song; small?: boolean }) {
   return <div className={`cover ${small ? 'small' : ''} palette-${song.title.length % 5}`}>{song.cover && !failed ? <img src={safeCover(song.cover)} alt={`${song.title} 封面`} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <><span className="cover-orbit"/><span className="cover-word">{song.artist || 'PLAVE'}</span><span className="cover-title">{song.title}</span><Disc3 className="cover-disc" size={small ? 28 : 60}/></>}</div>;
 }
 function App() {
-  const [state, setState] = useState<State>(emptyState), [ready, setReady] = useState(false), [fatal, setFatal] = useState('');
+  const [state, setState] = useState<State>(emptyState), [ready, setReady] = useState(false), [fatal, setFatal] = useState<StorageFailure | null>(null);
   const [tab, setTab] = useState('home'), [period, setPeriod] = useState<Period>('all'), [onlyPlave, setOnlyPlave] = useState(true), [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState(false), [user, setUser] = useState('');
   const [edit, setEdit] = useState<Song | null>(null), [restore, setRestore] = useState<ReturnType<typeof planRecovery> | null>(null), [menu, setMenu] = useState(false), [historyLimit, setHistoryLimit] = useState(50);
@@ -26,13 +28,21 @@ function App() {
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const persistedState = useRef<State>(emptyState());
   const busyRef = useRef(false), upload = useRef<HTMLInputElement>(null);
-  useEffect(() => { void lockWriter(() => { void loadStateWithInfo().then(({state: s, info}) => { setStorageInfo(info); persistedState.current = s; setState(s); setUser(s.username); setReady(true); }).catch(e => setFatal(`無法載入本機資料，原始資料未變更。${e instanceof Error ? e.message : '請確認瀏覽器允許網站儲存資料。'}`)); }).catch(e => setFatal(e.message)); }, []);
+  const [storageError, setStorageError] = useState<StorageFailure | undefined>();
+  useEffect(() => {
+    let active = true;
+    void loadStateWithInfo().then(({state: s, info}) => {
+      if (!active) return;
+      setStorageInfo(info); persistedState.current = s; setState(s); setUser(s.username); setReady(true);
+    }).catch(e => { if (active) setFatal(storageFailure(e, 'read')); });
+    return () => { active = false; };
+  }, []);
   const notify = (m: string, bad = false) => { setMessage(m); setError(bad); };
-  async function commit(s: State) { await saveState(s, persistedState.current); persistedState.current = s; setState(s); setStorageInfo({ snapshotPresent: true, storedSchemaVersion: 2, databaseVersion: 1 }); }
+  async function commit(s: State) { await saveState(s, persistedState.current); persistedState.current = s; setState(s); setStorageInfo({ snapshotPresent: true, storedSchemaVersion: 2, databaseVersion: 1 }); setStorageError(undefined); }
   async function act(fn: () => Promise<void>) {
     if (busyRef.current || !ready) return;
     busyRef.current = true; setBusy(true);
-    try { await fn(); } catch (e) { notify(e instanceof Error ? e.message : '操作失敗，請檢查瀏覽器儲存空間。', true); }
+    try { await fn(); } catch (e) { if (e instanceof StorageFailure) setStorageError(e); notify(e instanceof Error ? e.message : '操作失敗，請檢查瀏覽器儲存空間。', true); }
     finally { busyRef.current = false; setBusy(false); }
   }
   function addPlay(song: Song) { void act(async () => { await commit(manualPlays(state, song.id, manualPlatform, Date.now(), 1)); notify(`已為〈${song.title}〉記錄一次 ${platformName(state,manualPlatform)} 聆聽`); }); }
@@ -58,14 +68,15 @@ function App() {
   function navigate(id: string) { setTab(id); setMenu(false); setSearch(''); }
   function backup() { const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `listening-counter-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); notify('已開始下載備份，請確認檔案已儲存。'); }
   async function readBackup(file?: File) { if (!file) return; setRestore(null); try { if (file.size > 50 * 1024 * 1024) throw new Error('請選擇小於 50 MB 的 JSON 備份。'); setRestore(planRecovery(state, JSON.parse(await file.text()))); } catch (e) { notify(e instanceof Error ? e.message : '無法讀取備份。', true); } }
-  if (fatal) return <main className="fatal"><ShieldCheck size={36}/><h1>資料暫時無法開啟</h1><p role="alert">{fatal}</p><button onClick={() => location.reload()}>重新整理</button></main>;
+  if (fatal) return <main className="fatal"><ShieldCheck size={36}/><h1>資料暫時無法開啟</h1><p role="alert">{fatal.message}</p><StorageDiagnostics error={fatal}/><button onClick={() => location.reload()}>重新整理</button></main>;
   if (!ready) return <main className="fatal" aria-live="polite"><Headphones size={36}/><p>正在開啟你的聆聽手帳…</p></main>;
   return <div className="app-shell">
     <aside className={`sidebar ${menu ? 'open' : ''}`}><a className="brand" href="#" onClick={e => { e.preventDefault(); navigate('home'); }}><span className="brand-icon"><Headphones size={23}/></span><span>Listening<span className="brand-second">Counter<span className="brand-dot">.</span></span></span></a><div className="workspace-label">YOUR LISTENING SPACE</div><nav aria-label="主要導覽">{tabs.map(t => <button key={t.id} className={`nav-link ${tab === t.id ? 'active' : ''}`} onClick={() => navigate(t.id)}><t.icon size={19}/>{t.label}{tab === t.id && <span className="nav-dot"/>}</button>)}</nav><div className="sidebar-note"><span className="tiny-stars">✦</span><p>喜歡的聲音，<br/>值得好好收藏。</p><span>Made for PLLI, with love.</span><div className="five-dots"><i/><i/><i/><i/><i/></div></div><div className="sidebar-bottom"><ShieldCheck size={16}/><span>你的紀錄，只屬於你</span><span className="green-dot"/></div></aside>
     {menu && <button className="menu-shade" aria-label="關閉選單" onClick={() => setMenu(false)}/>}
     <div className="main-shell"><header className="topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="開啟選單" onClick={() => setMenu(!menu)}><Menu size={22}/></button><span>我的聆聽空間</span><ChevronRight size={14}/><strong>{tabs.find(t => t.id === tab)?.label}</strong></div><div className="topbar-right"><span className="local-badge"><span className="green-dot"/>本機私密儲存</span><span className="avatar">P</span></div></header>
     <main><div className="page-heading"><div><div className="eyebrow">LISTEN. RECORD. REPEAT.</div><h1>{tab === 'home' ? '每一次喜歡，都算數。' : tabs.find(t => t.id === tab)?.label}</h1><p>{tab === 'home' ? '留住與 PLAVE 相伴的每一刻，慢慢累積你的聆聽日常。' : tab === 'songs' ? '收藏喜歡的旋律，為每首歌留下自己的目標。' : tab === 'history' ? '每一次聆聽，都有跡可循。' : '連接公開紀錄，也好好保護你的個人收藏。'}</p></div><button className="primary" disabled={busy} onClick={() => setEdit(blankSong())}><Plus size={17}/>新增歌曲</button></div>
-    <section className="panel storage-diagnostics" aria-label="本機資料診斷"><h2>本機資料診斷</h2><p className="hint">目前網址：<span>{location.origin}</span> · 資料庫 listening-counter／state／main · IndexedDB 版本 {storageInfo?.databaseVersion} · 載入快照 {storageInfo?.storedSchemaVersion ?? '不存在'} → 程式格式 2</p><p>未篩選總數：{state.songs.length} 首歌曲、{state.plays.length} 筆紀錄</p>{state.songs.length === 0 && state.plays.length === 0 && <p role="status" className="hint">{storageInfo?.snapshotPresent ? '目前網址儲存的是空快照。' : '目前網址找不到既有快照，尚未自動寫入空資料。'}不同網域、預覽網址、瀏覽器或 Chrome 使用者設定檔不共用資料。若升級前有資料，請先回原網址下載備份；可到「連接與備份」預覽安全補入，請勿清除網站資料。</p>}</section>
+    <section className="panel storage-diagnostics" aria-label="本機資料診斷"><h2>本機資料診斷</h2><p className="hint">目前網址：<span>{location.origin}</span> · 資料庫 listening-counter／state／main · IndexedDB 版本 {storageInfo?.databaseVersion} · 載入快照 {storageInfo?.storedSchemaVersion ?? '不存在'} → 程式格式 2</p><p>未篩選總數：{state.songs.length} 首歌曲、{state.plays.length} 筆紀錄</p>{state.songs.length === 0 && state.plays.length === 0 && <p role="status" className="hint">{storageInfo?.snapshotPresent ? '目前網址儲存的是空快照。' : '目前網址找不到既有快照，尚未自動寫入空資料。'}不同網域、預覽網址、瀏覽器或 Chrome 使用者設定檔不共用資料。若升級前有資料，請先回原網址下載備份；可到「連接與備份」預覽安全補入，請勿清除網站資料。</p>}<StorageDiagnostics/></section>
+    {storageError && <StorageDiagnostics error={storageError}/>}
     {message && <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}><span>{error ? '⚠ ' : '✓ '}{message}</span><button className="icon-button" aria-label="關閉通知" onClick={() => setMessage('')}><X size={16}/></button></div>}
     {(tab === 'home' || tab === 'songs' || tab === 'history') && <div className="filterbar"><div className="segments" aria-label="統計期間">{periods.map(p => <button key={p.id} className={period === p.id ? 'selected' : ''} onClick={() => setPeriod(p.id)}>{p.label}</button>)}</div><label className="check-filter"><input type="checkbox" checked={onlyPlave} onChange={e => setOnlyPlave(e.target.checked)}/>只看 PLAVE<span className="filter-help">可在編輯歌曲時修正</span></label></div>}
     {(tab === 'home' || tab === 'songs' || tab === 'history') && <section className="panel platform-controls"><label className="field">平台篩選<select aria-label="平台篩選" value={platform} onChange={e => setPlatformFilter(e.target.value)}><option value="all">全部</option>{state.platforms.map(p => <option key={p.id} value={p.id}>{p.name}{p.id === 'other' ? '（含自訂）' : ''}</option>)}</select></label><label className="field">手動計數平台<select aria-label="手動計數平台" value={manualPlatform} onChange={e => setManualPlatform(e.target.value)}>{state.platforms.filter(p => !p.archived).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><p className="hint">篩選只改變顯示。+1 使用手動計數平台；舊紀錄保留來源未確認。</p></section>}

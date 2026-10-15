@@ -195,13 +195,11 @@ test("手機：不同 origin 空資料提示與 v1 備份安全補入預覽，�
   const original = await snapshot(page);
   await navigate(page, "連接與備份");
   const upload = () =>
-    page
-      .getByLabel("選擇 JSON 備份")
-      .setInputFiles({
-        name: "synthetic-v1.json",
-        mimeType: "application/json",
-        buffer: Buffer.from(JSON.stringify(v1Fixture())),
-      });
+    page.getByLabel("選擇 JSON 備份").setInputFiles({
+      name: "synthetic-v1.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(v1Fixture())),
+    });
   await upload();
   await expect(page.getByRole("dialog")).toContainText(
     "將補入 21 首歌曲、54 筆紀錄",
@@ -254,4 +252,177 @@ test("手機：損壞快照顯示錯誤並停止，不能當作空帳本寫入",
     page.getByRole("button", { name: "新增歌曲", exact: true }),
   ).toHaveCount(0);
   expect(await snapshot(page)).toBeNull();
+});
+
+test("手機：舊版同源長期寫入鎖不阻擋啟動，失敗寫入有安全診斷，釋放後可重試", async ({
+  page,
+  context,
+}) => {
+  const holder = await context.newPage();
+  await holder.goto("/");
+  await expect(
+    holder.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  await holder.evaluate(
+    () =>
+      new Promise<void>((ready) => {
+        void navigator.locks.request("listening-counter-writer", async () => {
+          await new Promise<void>((release) => {
+            (window as any).releaseRegressionLock = release;
+            ready();
+          });
+        });
+      }),
+  );
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "資料暫時無法開啟" }),
+  ).toHaveCount(0);
+  expect(await snapshot(page)).toBeUndefined();
+  await page.getByRole("button", { name: "新增歌曲", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("歌曲名稱").fill("鎖定回歸歌曲");
+  await page.getByRole("button", { name: "儲存歌曲" }).click();
+  await expect(page.getByRole("alert")).toContainText("寫入鎖目前被占用");
+  expect(await snapshot(page)).toBeUndefined();
+  // The dialog remains open after failed save. Close it to inspect diagnostics.
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  const diagnostic = page
+    .locator(".safe-diagnostics")
+    .filter({ hasText: "LOCK_BUSY" });
+  await expect(diagnostic).toContainText('"writerHeld": 1');
+  await expect(diagnostic).toContainText('"phase": "lock"');
+  await expect(diagnostic).not.toContainText("clientId");
+  await expect(diagnostic).not.toContainText("鎖定回歸歌曲");
+  await holder.evaluate(() => {
+    (window as any).releaseRegressionLock();
+  });
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async () =>
+          ((await navigator.locks.query()).held || []).filter(
+            (l) => l.name === "listening-counter-writer",
+          ).length,
+      ),
+    )
+    .toBe(0);
+  await page.getByRole("button", { name: "新增歌曲", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("歌曲名稱").fill("解鎖後歌曲");
+  await page.getByRole("button", { name: "儲存歌曲" }).click();
+  await expect(page.locator(".song-card")).toHaveCount(1);
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async () =>
+          ((await navigator.locks.query()).held || []).filter(
+            (l) => l.name === "listening-counter-writer",
+          ).length,
+      ),
+    )
+    .toBe(0);
+  await holder.close();
+});
+test("手機：兩分頁可同時讀取，過期快照拒絕覆蓋；重新整理後可安全新增", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  const second = await context.newPage();
+  await second.goto("/");
+  await expect(
+    second.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  async function add(target: Page, title: string) {
+    await target.getByRole("button", { name: "新增歌曲", exact: true }).click();
+    await target.getByRole("dialog").getByLabel("歌曲名稱").fill(title);
+    await target.getByRole("button", { name: "儲存歌曲" }).click();
+  }
+  await add(page, "第一頁歌曲");
+  await expect(page.locator(".song-card")).toHaveCount(1);
+  await add(second, "過期頁歌曲");
+  await expect(second.getByRole("alert")).toContainText("避免覆蓋");
+  expect((await snapshot(page)).songs.map((s: any) => s.title)).toEqual([
+    "第一頁歌曲",
+  ]);
+  await second.reload();
+  await expect(second.locator(".song-card")).toHaveCount(1);
+  await add(second, "第二頁歌曲");
+  await expect(second.locator(".song-card")).toHaveCount(2);
+  await page.reload();
+  await expect(page.locator(".song-card")).toHaveCount(2);
+  await second.close();
+});
+test("手機：不支援 Web Locks 時可開啟空帳本，寫入明確拒絕", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "新增歌曲", exact: true }).click();
+  await page.getByRole("dialog").getByLabel("歌曲名稱").fill("不可寫入");
+  await page.getByRole("button", { name: "儲存歌曲" }).click();
+  await expect(page.getByRole("alert")).toContainText("不支援安全寫入鎖定");
+  expect(await snapshot(page)).toBeUndefined();
+});
+
+test("手機：資料庫版本錯誤顯示 DB_VERSION，不誤報分頁且保留原資料", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "本機資料診斷" }),
+  ).toBeVisible();
+  const legacy = v1Fixture();
+  await page.evaluate(async (raw) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("listening-counter", 2);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("state", "readwrite");
+      tx.objectStore("state").put(raw, "main");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, legacy);
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText("資料庫版本高於");
+  await expect(page.locator(".safe-diagnostics")).toContainText("DB_VERSION");
+  await expect(page.locator(".safe-diagnostics")).toContainText("VersionError");
+  await expect(page.locator(".safe-diagnostics")).not.toContainText(
+    "LOCK_BUSY",
+  );
+  const actual = await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const r = indexedDB.open("listening-counter", 2);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    const raw = await new Promise((resolve, reject) => {
+      const r = db.transaction("state").objectStore("state").get("main");
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    db.close();
+    return raw;
+  });
+  expect(actual).toEqual(legacy);
 });

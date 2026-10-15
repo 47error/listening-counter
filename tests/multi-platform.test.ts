@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { openDB, deleteDB } from "idb";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, afterEach, vi, expect, it } from "vitest";
 import {
   emptyState,
   filterPlays,
@@ -35,7 +35,17 @@ const event = {
   time: "2023-11-14T22:15:00Z",
   subtitles: [{ name: "PLAVE - Topic" }],
 };
+afterEach(() => vi.unstubAllGlobals());
 beforeEach(async () => {
+  vi.stubGlobal("navigator", {
+    locks: {
+      request: async (
+        _n: string,
+        _o: unknown,
+        callback: (lock: object) => unknown,
+      ) => callback({ name: "listening-counter-writer" }),
+    },
+  });
   await deleteDB("listening-counter");
 });
 it("實際 v1 IndexedDB 快照升級可重複執行，保留總次數、ID、歌曲目標及游標", async () => {

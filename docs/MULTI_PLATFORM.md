@@ -2,7 +2,7 @@
 
 ## 修改範圍
 
-沿用原有 React、Vite、IndexedDB、白底鼠尾草綠 UI、Web Locks 單分頁寫入鎖及 Last.fm Netlify Function。無新增後端、付費 API、登入要求或部署設定。
+沿用原有 React、Vite、IndexedDB、白底鼠尾草綠 UI、Web Locks 寫入鎖（修復後僅在單次寫入持鎖）及 Last.fm Netlify Function。無新增後端、付費 API、登入要求或部署設定。
 
 - `src/domain.ts`：v2 快照、驗證、v1 遷移、平台管理、分平台統計、手動批次、刪除去重鍵、歌曲合併及疑似重複提示。
 - `src/db.ts`：在載入時驗證並升級快照；原始 IndexedDB 不清空、不刪除、不變更 object store。
@@ -64,3 +64,5 @@ Melon 僅提供歌曲輸入、手動選平台、日期及批次次數；沒有�
 自動化手機驗證使用桌面 Chromium 的 Android 裝置／視窗模擬，不等同實體 Android 真機驗證。
 
 升級顯示 0 的診斷與修復請見 [ZERO_DATA_DIAGNOSIS.md](ZERO_DATA_DIAGNOSIS.md)。
+
+Android Chrome 啟動鎖定修復見 [STORAGE_LOCK_DIAGNOSIS.md](STORAGE_LOCK_DIAGNOSIS.md)。

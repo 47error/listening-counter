@@ -18,7 +18,7 @@ A music listening counter for fans
 - 自動辨識 PLAVE／플레이브，預設只顯示 PLAVE；可關閉篩選並手動修正分類、版本。原始標題的 Live、Remix 等只做初步分類，不保證辨識所有版本。
 - 當地時間的每日、週一開始的每週、每月、累積統計；最近七天圖表；每首歌的累積目標及進度條。
 - JSON 下載備份、格式檢查、確認後取代還原。還原是取代，不是合併。
-- IndexedDB 交易寫入及單分頁寫入鎖；同步錯誤保留已儲存資料與分頁進度。
+- IndexedDB 交易寫入及每次寫入短暫持有的獨占鎖與過期快照檢查；同步錯誤保留已儲存資料與分頁進度。
 - Last.fm 金鑰僅於 Functions 讀取環境變數；沒有 Spotify 密碼、非官方 API 或會員系統。
 
 ## 本機啟動（網路恢復後）
@@ -159,3 +159,5 @@ git push origin main
 新增測試：`npm run test:db`（資料庫與多平台）、`npx playwright install chromium` 後執行 `npm run test:e2e`（Chromium 手機模擬）。
 
 [升級後顯示 0：非破壞性診斷與安全補入](docs/ZERO_DATA_DIAGNOSIS.md)
+
+[Android Chrome 啟動鎖定與安全錯誤診斷](docs/STORAGE_LOCK_DIAGNOSIS.md)

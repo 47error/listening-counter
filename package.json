@@ -12,7 +12,7 @@
     "build": "npm run typecheck && vite build",
     "test": "node --import ./tests/offline/register.mjs tests/offline/core.test.mjs",
     "test:offline": "npm test",
-    "test:db": "vitest run tests/db.test.ts tests/multi-platform.test.ts",
+    "test:db": "vitest run tests/db.test.ts tests/multi-platform.test.ts tests/storage-lifecycle.test.ts",
     "preview": "vite preview --host 0.0.0.0",
     "test:e2e": "playwright test"
   },

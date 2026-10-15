@@ -30,3 +30,5 @@
 6. 若格式拒絕，保留原檔，不自行刪欄位或改 ID。需針對實際欄位進一步診斷，不能只憑筆數放寬驗證。
 
 測試使用 `tests/fixtures/v1.ts` 合成資料，未使用私人紀錄。手機測試為 Chromium 視窗模擬，不代表實體 Android 或使用者實際備份已驗證。
+
+後續 Android Chrome 顯示其他分頁鎖定的問題與修復，見 [STORAGE_LOCK_DIAGNOSIS.md](STORAGE_LOCK_DIAGNOSIS.md)。
